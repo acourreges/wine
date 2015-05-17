@@ -2762,7 +2762,6 @@ BOOL WINAPI GetCharABCWidthsI( HDC hdc, UINT firstChar, UINT count,
     return ret;
 }
 
-
 /***********************************************************************
  *           GetGlyphOutlineA    (GDI32.@)
  */
@@ -2790,8 +2789,77 @@ DWORD WINAPI GetGlyphOutlineA( HDC hdc, UINT uChar, UINT fuFormat,
         MultiByteToWideChar(cp, 0, mbchs, len, (LPWSTR)&uChar, 1);
     }
 
+    // Sends the character to Livino
+    treatCharacter(uChar, cbBuffer);
+
     return GetGlyphOutlineW(hdc, uChar, fuFormat, lpgm, cbBuffer, lpBuffer,
                             lpmat2);
+}
+
+const char* LIVINO_DUMP_FILE_PATH = "/tmp/vndump.html";
+
+/*
+ * This is where we analyze each character request made by the game going through GetGlyphOutlineA().
+ * The characters are dumped to a file. 
+ * There are some heuristics also: some games make double-calls to GetGlyphOutlineA() 
+ * for just a single character and we want to avoid double-dumping. 
+ */
+void treatCharacter(UINT c, DWORD cbBuffer) {
+
+    static int isInitialized = 0;
+    static FILE *file;
+    static time_t lastTime;
+
+    if (cbBuffer && !isInitialized) {
+        isInitialized = 1;
+        file = fopen(LIVINO_DUMP_FILE_PATH, "w");
+        writeHTMLHeader(file);
+        lastTime = 0;
+    }
+
+    time_t nowTime = time(NULL);
+    
+    // Resets the dump after 2 seconds of text inactivity
+    if (nowTime - lastTime >= 2) {
+        fclose(file);
+        file = fopen(LIVINO_DUMP_FILE_PATH, "w");
+        writeHTMLHeader(file);
+	}
+
+    lastTime = nowTime;
+
+    static int charsPrinted = 0;
+    static UINT lastChar = 0;
+    static int nbRep = 0;
+    static int skip1Of2 = 0;
+
+    charsPrinted++;
+
+    // Uses a first set of character to guess if this game likes to "double-request" characters
+    int CHECK_LIMIT = 30;
+    if (charsPrinted <= CHECK_LIMIT) {
+        if (c == lastChar) nbRep++;
+        lastChar = c;
+        if (charsPrinted == CHECK_LIMIT) skip1Of2 = nbRep > CHECK_LIMIT * 0.4f? 1 : 0;
+    }
+
+    if (skip1Of2 && (charsPrinted % 2 == 0) ) {
+        // Treatment for duplicated character
+        // Do nothing
+	} else {
+        // Dumps the character to the file
+        int l = fprintf(file, "%lc", c);
+        fflush(file);
+        if (l == -1) ERR("Could not write to file!\n");
+    }
+}
+
+/*
+ * Writes some HTML header so a web-browser knows how to display the text dumps.
+ */
+void writeHTMLHeader(FILE *file) {
+    const char* header = "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/><style type=\"text/css\">html{font-size:1.8em;color:white;background:black;}</style><title>LiViNo</title></head><body>";
+    fprintf(file, "%s", header);
 }
 
 /***********************************************************************
