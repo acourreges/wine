@@ -2789,9 +2789,6 @@ DWORD WINAPI GetGlyphOutlineA( HDC hdc, UINT uChar, UINT fuFormat,
         MultiByteToWideChar(cp, 0, mbchs, len, (LPWSTR)&uChar, 1);
     }
 
-    // Sends the character to Livino
-    treatCharacter(uChar, cbBuffer);
-
     return GetGlyphOutlineW(hdc, uChar, fuFormat, lpgm, cbBuffer, lpBuffer,
                             lpmat2);
 }
@@ -2799,9 +2796,9 @@ DWORD WINAPI GetGlyphOutlineA( HDC hdc, UINT uChar, UINT fuFormat,
 const char* LIVINO_DUMP_FILE_PATH = "/tmp/vndump.html";
 
 /*
- * This is where we analyze each character request made by the game going through GetGlyphOutlineA().
+ * This where we analyze each character request made by the game going through GetGlyphOutlineB().
  * The characters are dumped to a file. 
- * There are some heuristics also: some games make double-calls to GetGlyphOutlineA() 
+ * There are some heuristics also: some games make double-calls
  * for just a single character and we want to avoid double-dumping. 
  */
 void treatCharacter(UINT c, DWORD cbBuffer) {
@@ -2809,6 +2806,8 @@ void treatCharacter(UINT c, DWORD cbBuffer) {
     static int isInitialized = 0;
     static FILE *file;
     static time_t lastTime;
+
+    if (!cbBuffer) return;
 
     if (cbBuffer && !isInitialized) {
         isInitialized = 1;
@@ -2832,15 +2831,32 @@ void treatCharacter(UINT c, DWORD cbBuffer) {
     static UINT lastChar = 0;
     static int nbRep = 0;
     static int skip1Of2 = 0;
+    static int pairJustFound = 0;
 
     charsPrinted++;
 
-    // Uses a first set of character to guess if this game likes to "double-request" characters
+    // Examines the set of the latest printed characters to guess 
+    // if this game likes to "double requests" characters.
     int CHECK_LIMIT = 30;
-    if (charsPrinted <= CHECK_LIMIT) {
-        if (c == lastChar) nbRep++;
+    
+    if (skip1Of2 == 0 && charsPrinted <= CHECK_LIMIT) {
+        if (c == lastChar) {
+            // Just read a double character
+            if (!pairJustFound) {
+                // New pair, count it
+                nbRep ++;
+            }
+            // Pair or series of the same character
+            pairJustFound = 1;
+        } else {
+            pairJustFound = 0;
+        }
         lastChar = c;
-        if (charsPrinted == CHECK_LIMIT) skip1Of2 = nbRep > CHECK_LIMIT * 0.4f? 1 : 0;
+        if (charsPrinted == CHECK_LIMIT) {
+            // Time to check our latest set
+            skip1Of2 = nbRep > CHECK_LIMIT * 0.4f? 1 : 0;
+            nbRep = charsPrinted = 0; // Reset for next set to examine
+        }
     }
 
     if (skip1Of2 && (charsPrinted % 2 == 0) ) {
@@ -2852,6 +2868,7 @@ void treatCharacter(UINT c, DWORD cbBuffer) {
         fflush(file);
         if (l == -1) ERR("Could not write to file!\n");
     }
+
 }
 
 /*
@@ -2869,6 +2886,8 @@ DWORD WINAPI GetGlyphOutlineW( HDC hdc, UINT uChar, UINT fuFormat,
                                  LPGLYPHMETRICS lpgm, DWORD cbBuffer,
                                  LPVOID lpBuffer, const MAT2 *lpmat2 )
 {
+    
+
     DC *dc;
     DWORD ret;
     PHYSDEV dev;
@@ -2880,6 +2899,9 @@ DWORD WINAPI GetGlyphOutlineW( HDC hdc, UINT uChar, UINT fuFormat,
 
     dc = get_dc_ptr(hdc);
     if(!dc) return GDI_ERROR;
+
+    // Forward to Livino
+    treatCharacter(uChar, cbBuffer);
 
     dev = GET_DC_PHYSDEV( dc, pGetGlyphOutline );
     ret = dev->funcs->pGetGlyphOutline( dev, uChar, fuFormat, lpgm, cbBuffer, lpBuffer, lpmat2 );
